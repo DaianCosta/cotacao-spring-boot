@@ -73,7 +73,8 @@ class QuoteControllerTest {
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.status").value(404))
                 .andExpect(jsonPath("$.error").value("Not Found"))
-                .andExpect(jsonPath("$.message").value("Produto não encontrado com o ID: nonexistent"));
+                .andExpect(jsonPath("$.message").value("Produto não encontrado com o ID: nonexistent"))
+                .andExpect(jsonPath("$.details").doesNotExist());
     }
 
     @Test
