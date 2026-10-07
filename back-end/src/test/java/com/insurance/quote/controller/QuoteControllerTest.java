@@ -20,6 +20,8 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -41,6 +43,7 @@ class QuoteControllerTest {
         mockMvc = MockMvcBuilders
                 .standaloneSetup(quoteController)
                 .setControllerAdvice(new GlobalExceptionHandler())
+                .addDispatcherServletCustomizer(ds -> ds.setThrowExceptionIfNoHandlerFound(true))
                 .build();
     }
 
@@ -137,5 +140,42 @@ class QuoteControllerTest {
                         .content(body))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.status").value(400));
+    }
+
+    @Test
+    void returns404_whenRouteNotFound() throws Exception {
+        mockMvc.perform(get("/"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.status").value(404))
+                .andExpect(jsonPath("$.error").value("Not Found"))
+                .andExpect(jsonPath("$.message").value("Nenhum endpoint encontrado para GET /"));
+    }
+
+    @Test
+    void returns404_whenArbitraryRouteNotFound() throws Exception {
+        mockMvc.perform(get("/caminho/qualquer/inexistente"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.status").value(404))
+                .andExpect(jsonPath("$.error").value("Not Found"));
+    }
+
+    @Test
+    void returns405_whenMethodNotAllowed_GET() throws Exception {
+        mockMvc.perform(get("/api/quotes"))
+                .andExpect(status().isMethodNotAllowed())
+                .andExpect(jsonPath("$.status").value(405))
+                .andExpect(jsonPath("$.error").value("Method Not Allowed"))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("GET")))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("POST")));
+    }
+
+    @Test
+    void returns405_whenMethodNotAllowed_DELETE() throws Exception {
+        mockMvc.perform(delete("/api/quotes"))
+                .andExpect(status().isMethodNotAllowed())
+                .andExpect(jsonPath("$.status").value(405))
+                .andExpect(jsonPath("$.error").value("Method Not Allowed"))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("DELETE")))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("POST")));
     }
 }
