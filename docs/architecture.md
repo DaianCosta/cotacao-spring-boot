@@ -1,191 +1,136 @@
-# Arquitetura — API de Cotação de Seguro
+# Arquitetura — task-007: Responder 404/405 e Swagger
 
 ## Visão geral
 
-API REST em Java 21 + Spring Boot 3 + MongoDB que recebe dados cadastrais, produto selecionado e item segurado e retorna o preço do seguro calculado. Os produtos são pré-cadastrados (seed) no MongoDB.
-
-## Componentes
-
-```
-┌─────────────────────────────────────────────────┐
-│                Spring Boot App                  │
-│                                                 │
-│  Controller          Service          Repository│
-│  ┌──────────┐  ┌──────────────┐  ┌─────────────┐│
-│  │QuoteCtrl │→ │QuoteService  │→ │ProductRepo  ││
-│  └──────────┘  │              │  └─────────────┘│
-│                │PricingService│                  │
-│                └──────────────┘                  │
-│                                                 │
-│  Config / Seed                                  │
-│  ┌──────────────┐                               │
-│  │DataSeeder    │ (ApplicationRunner)            │
-│  └──────────────┘                               │
-│                                                 │
-│  Exception Handling                             │
-│  ┌──────────────────────┐                       │
-│  │GlobalExceptionHandler│ (@ControllerAdvice)   │
-│  └──────────────────────┘                       │
-└─────────────────────────────────────────────────┘
-          │
-          ▼
-   ┌────────────┐
-   │  MongoDB    │
-   │ (products)  │
-   └────────────┘
-```
-
-### Camadas
-
-| Camada | Pacote | Responsabilidade |
-|--------|--------|------------------|
-| Controller | `com.insurance.quote.controller` | Recebe requisições HTTP, valida entrada (Bean Validation), delega ao serviço |
-| Service | `com.insurance.quote.service` | Lógica de negócio: busca o produto, calcula o preço via `PricingService` |
-| Repository | `com.insurance.quote.repository` | Acesso ao MongoDB via Spring Data MongoDB |
-| Model | `com.insurance.quote.model` | Documentos MongoDB (`Product`) |
-| DTO | `com.insurance.quote.dto` | Objetos de request/response (`QuoteRequest`, `QuoteResponse`) |
-| Config | `com.insurance.quote.config` | Seed de dados (`DataSeeder`) |
-| Exception | `com.insurance.quote.exception` | Handler global de exceções, exceções customizadas |
-
-### Fluxo principal — Cotação
-
-1. `POST /api/quotes` com JSON contendo `customer`, `productId` e `insuredItem`.
-2. `QuoteController` valida o payload via Bean Validation (`@Valid`).
-3. `QuoteService.quote()` busca o `Product` pelo `id` no `ProductRepository`.
-4. Se não encontrado, lança `ProductNotFoundException` → HTTP 404.
-5. `PricingService.calculatePrice(product)` retorna o preço com base no tipo do produto.
-6. Controller retorna HTTP 200 com `QuoteResponse`.
-
-### Cálculo de preço (PricingService)
-
-Por ora o cálculo é direto: retorna o `basePrice` do produto. A separação em `PricingService` permite evoluir para fórmulas distintas por tipo (`COBERTURA` vs `ASSISTENCIA`) sem alterar o serviço de cotação.
-
-### Seed de dados (DataSeeder)
-
-Um `ApplicationRunner` que, ao iniciar, verifica se a collection `products` está vazia. Se estiver, insere os três produtos pré-cadastrados. Isso garante idempotência: reiniciar a aplicação não duplica dados.
-
-## Mapeamento de critérios de aceitação
-
-| AC | Componente(s) |
-|----|---------------|
-| AC-1 | `QuoteController`, `QuoteRequest` (DTO com validação) |
-| AC-2 | `QuoteController`, `QuoteService`, `QuoteResponse` |
-| AC-3 | `PricingService`, `QuoteService` |
-| AC-4 | `ProductNotFoundException`, `GlobalExceptionHandler` |
-| AC-5 | Bean Validation no `QuoteRequest`, `GlobalExceptionHandler` |
-| AC-6 | `DataSeeder` |
-| AC-7 | `Product` (documento MongoDB) |
-| AC-8 | Testes JUnit 5 com `@SpringBootTest` e Embedded MongoDB ou Testcontainers |
-| AC-9 | `application.properties` com `spring.data.mongodb.uri=${SPRING_DATA_MONGODB_URI}` |
+Tarefa de correção no tratamento de erros HTTP e adição de documentação Swagger/OpenAPI à API de cotação de seguro.
+Não há alteração no modelo de dados, na lógica de negócio nem criação de front-end.
 
 ## Front-end
 
-**None: no front-end changes.** Os requisitos pedem apenas uma API REST.
+**None: no front-end changes.** O projeto não possui front-end; a tarefa é exclusivamente back-end.
+
+## Componentes afetados
+
+### 1. GlobalExceptionHandler (correção)
+
+**Arquivo**: `back-end/src/main/java/com/insurance/quote/exception/GlobalExceptionHandler.java`
+
+O handler atual captura `Exception.class` e retorna 500 para tudo que não seja `ProductNotFoundException` ou `MethodArgumentNotValidException`. Isso inclui exceções do Spring MVC que deveriam resultar em 404 ou 405.
+
+**Mudança**: adicionar dois novos métodos `@ExceptionHandler`:
+
+- `handleNoHandlerFound(NoHandlerFoundException ex)` → retorna 404 com `ErrorResponse(404, "Not Found", mensagem descritiva)`.
+- `handleMethodNotAllowed(HttpRequestMethodNotSupportedException ex)` → retorna 405 com `ErrorResponse(405, "Method Not Allowed", mensagem descritiva)`.
+
+O handler genérico de `Exception.class` permanece inalterado para erros realmente inesperados.
+
+**Satisfaz**: AC-1, AC-2, AC-3, AC-4, AC-5, AC-6.
+
+### 2. Configuração do Spring MVC (nova propriedade)
+
+**Arquivo**: `back-end/src/main/resources/application.properties`
+
+Adicionar:
+```properties
+spring.mvc.throw-exception-if-no-handler-found=true
+spring.web.resources.add-mappings=false
+```
+
+A primeira propriedade faz o Spring lançar `NoHandlerFoundException` em vez de retornar a página de erro padrão.
+A segunda desabilita o mapeamento automático de recursos estáticos (que capturaria a requisição antes do handler).
+
+**Nota**: `spring.web.resources.add-mappings=false` é seguro porque esta API não serve recursos estáticos. O Swagger UI
+do springdoc usa seu próprio servlet e não depende do mapeamento de recursos estáticos do Spring.
+
+**Satisfaz**: AC-1, AC-4.
+
+### 3. Dependência springdoc-openapi (nova)
+
+**Arquivo**: `back-end/pom.xml`
+
+Adicionar a dependência `springdoc-openapi-starter-webmvc-ui` (versão 2.6.0), que é compatível com Spring Boot 3.3.x
+e Java 21. Ela provê:
+
+- Swagger UI em `/swagger-ui.html` (redireciona para `/swagger-ui/index.html`)
+- Especificação OpenAPI em `/v3/api-docs`
+
+Nenhuma configuração adicional é necessária; o springdoc faz scan automático dos controllers.
+
+**Satisfaz**: AC-7.
+
+### 4. Testes (novos e existentes)
+
+**Arquivo**: `back-end/src/test/java/com/insurance/quote/controller/QuoteControllerTest.java`
+
+Adicionar testes ao arquivo existente:
+
+- `returns404_whenRouteNotFound` — `GET /` → 404 com corpo JSON padronizado.
+- `returns404_whenArbitraryRouteNotFound` — `GET /caminho/qualquer/inexistente` → 404.
+- `returns405_whenMethodNotAllowed_GET` — `GET /api/quotes` → 405 com corpo JSON padronizado.
+- `returns405_whenMethodNotAllowed_DELETE` — `DELETE /api/quotes` → 405.
+
+**Satisfaz**: AC-8.
+
+## Mapeamento AC → Componentes
+
+| AC   | Componente(s)                                       |
+|------|-----------------------------------------------------|
+| AC-1 | GlobalExceptionHandler + application.properties     |
+| AC-2 | GlobalExceptionHandler                              |
+| AC-3 | GlobalExceptionHandler                              |
+| AC-4 | GlobalExceptionHandler + application.properties     |
+| AC-5 | GlobalExceptionHandler (usa `ErrorResponse` existente) |
+| AC-6 | GlobalExceptionHandler (handler genérico inalterado)|
+| AC-7 | pom.xml (springdoc-openapi)                         |
+| AC-8 | QuoteControllerTest                                 |
 
 ## Plano de implementação
 
-### Backend (`back-end/`)
+### Backend
 
-A estrutura Maven será criada na pasta `back-end/` com o seguinte layout:
+Todos os arquivos estão na pasta `back-end/`. A implementação é disjunta e pode ser feita em qualquer ordem.
 
-```
-back-end/
-├── pom.xml
-├── Dockerfile
-├── .env.example
-└── src/
-    ├── main/
-    │   ├── java/com/insurance/quote/
-    │   │   ├── QuoteApplication.java
-    │   │   ├── controller/
-    │   │   │   └── QuoteController.java
-    │   │   ├── dto/
-    │   │   │   ├── QuoteRequest.java
-    │   │   │   ├── QuoteResponse.java
-    │   │   │   ├── CustomerData.java
-    │   │   │   ├── InsuredItem.java
-    │   │   │   └── ErrorResponse.java
-    │   │   ├── model/
-    │   │   │   ├── Product.java
-    │   │   │   └── ProductType.java
-    │   │   ├── repository/
-    │   │   │   └── ProductRepository.java
-    │   │   ├── service/
-    │   │   │   ├── QuoteService.java
-    │   │   │   └── PricingService.java
-    │   │   ├── config/
-    │   │   │   └── DataSeeder.java
-    │   │   └── exception/
-    │   │       ├── ProductNotFoundException.java
-    │   │       └── GlobalExceptionHandler.java
-    │   └── resources/
-    │       └── application.properties
-    └── test/
-        └── java/com/insurance/quote/
-            ├── controller/
-            │   └── QuoteControllerTest.java
-            └── service/
-                ├── QuoteServiceTest.java
-                └── PricingServiceTest.java
-```
+| Passo | Arquivo | Ação |
+|-------|---------|------|
+| 1 | `pom.xml` | Adicionar dependência `springdoc-openapi-starter-webmvc-ui:2.6.0` |
+| 2 | `src/main/resources/application.properties` | Adicionar `spring.mvc.throw-exception-if-no-handler-found=true` e `spring.web.resources.add-mappings=false` |
+| 3 | `src/main/java/.../exception/GlobalExceptionHandler.java` | Adicionar handlers para `NoHandlerFoundException` e `HttpRequestMethodNotSupportedException` |
+| 4 | `src/test/java/.../controller/QuoteControllerTest.java` | Adicionar 4 testes para 404 e 405 |
 
-#### Tarefas backend (em ordem)
+### Frontend
 
-1. **Criar `pom.xml`** com dependências: `spring-boot-starter-web`, `spring-boot-starter-data-mongodb`, `spring-boot-starter-validation`, `spring-boot-starter-test`, `de.flapdoodle.embed.mongo.spring3x` (teste).
-2. **Criar `QuoteApplication.java`** — classe principal com `@SpringBootApplication`.
-3. **Criar modelo `Product`** — documento MongoDB com campos `id`, `name`, `type` (enum `ProductType`), `basePrice`.
-4. **Criar enum `ProductType`** — valores `COBERTURA`, `ASSISTENCIA`.
-5. **Criar `ProductRepository`** — interface Spring Data MongoDB.
-6. **Criar DTOs** — `CustomerData`, `InsuredItem`, `QuoteRequest`, `QuoteResponse`, `ErrorResponse` com anotações de validação.
-7. **Criar `PricingService`** — cálculo de preço baseado no tipo do produto.
-8. **Criar `QuoteService`** — orquestra busca do produto e cálculo de preço.
-9. **Criar `QuoteController`** — endpoint `POST /api/quotes`.
-10. **Criar `GlobalExceptionHandler`** — tratamento de `ProductNotFoundException` e `MethodArgumentNotValidException`.
-11. **Criar `DataSeeder`** — seed dos três produtos.
-12. **Criar `application.properties`** — configuração do MongoDB URI e porta.
-13. **Criar `.env.example`** — variáveis de ambiente documentadas.
-14. **Criar `Dockerfile`** — multi-stage build com Maven + JDK 21, `HEALTHCHECK`.
-15. **Escrever testes** — `QuoteControllerTest` (integração), `QuoteServiceTest`, `PricingServiceTest` (unitários).
-
-### Frontend (`front-end/`)
-
-Nenhuma tarefa. Não há front-end neste projeto.
+Não há trabalho de front-end nesta tarefa.
 
 ## Como executar
+
+### Testes
+```bash
+cd back-end && mvn test
+```
+
+### Build
+```bash
+cd back-end && mvn -DskipTests package
+```
 
 ### Variáveis de ambiente
 
 | Variável | Descrição | Padrão |
 |----------|-----------|--------|
-| `SERVER_PORT` | Porta HTTP do servidor | `8080` |
-| `SPRING_DATA_MONGODB_URI` | URI de conexão ao MongoDB | `mongodb://localhost:27017/insurance` |
+| `SERVER_PORT` | Porta do servidor | `8080` |
+| `SPRING_DATA_MONGODB_URI` | URI de conexão MongoDB | `mongodb://localhost:27017/insurance` |
 
-### Testes
-
-```bash
-mvn test
-```
-
-Os testes usam Embedded MongoDB (flapdoodle) para não depender de um MongoDB externo.
-
-### Build
+### Iniciar o sistema
 
 ```bash
-mvn -DskipTests package
+cd back-end && java -jar target/quote-*.jar
 ```
 
-Gera o JAR em `back-end/target/`.
-
-### Executar
-
+Ou via Docker:
 ```bash
-# Com MongoDB local
-SPRING_DATA_MONGODB_URI=mongodb://localhost:27017/insurance java -jar back-end/target/quote-*.jar
-
-# Com Docker Compose (gerado pela Squad)
-docker compose up -d
+cd back-end && docker compose up -d
 ```
 
-### Lint
+### Swagger UI
 
-O projeto usa as regras padrão do compilador Java (sem linter adicional). Os testes validam o comportamento.
+Após iniciar, acessar: `http://localhost:8080/swagger-ui.html`
