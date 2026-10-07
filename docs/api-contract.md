@@ -1,48 +1,57 @@
-# Contrato de API — API de Cotação de Seguro
+# Contrato de API — task-007
 
-Base URL: `/api`
+## Base URL
 
-## Endpoints
+`http://localhost:8080`
 
-### POST /api/quotes
+## Formato de erro padrão
 
-Calcula o preço de uma cotação de seguro com base no produto selecionado.
+Todas as respostas de erro usam o record `ErrorResponse`:
 
-#### Request
+```json
+{
+  "status": 404,
+  "error": "Not Found",
+  "message": "Nenhum endpoint encontrado para GET /caminho",
+  "details": null
+}
+```
 
-**Content-Type:** `application/json`
+O campo `details` é omitido do JSON quando `null` (via `@JsonInclude(NON_NULL)`).
 
+---
+
+## Endpoints existentes (sem alteração)
+
+### POST /api/quotes — Criar cotação de seguro
+
+**Request**:
 ```json
 {
   "customer": {
     "name": "João da Silva",
     "document": "123.456.789-00"
   },
-  "productId": "6715a1b2c3d4e5f6a7b8c9d0",
+  "productId": "abc123",
   "insuredItem": {
-    "description": "Apartamento 3 quartos, Bairro Centro"
+    "description": "Apartamento 3 quartos"
   }
 }
 ```
 
-**Campos:**
+**Respostas**:
 
-| Campo | Tipo | Obrigatório | Validação | Descrição |
-|-------|------|-------------|-----------|-----------|
-| `customer` | `object` | Sim | `@NotNull` | Dados cadastrais do cliente |
-| `customer.name` | `string` | Sim | `@NotBlank` | Nome completo do cliente |
-| `customer.document` | `string` | Sim | `@NotBlank` | Documento do cliente (CPF ou CNPJ) |
-| `productId` | `string` | Sim | `@NotBlank` | ID do produto na collection `products` (ObjectId como string hex) |
-| `insuredItem` | `object` | Sim | `@NotNull` | Dados do item segurado |
-| `insuredItem.description` | `string` | Sim | `@NotBlank` | Descrição do item segurado |
+| Status | Descrição | Corpo |
+|--------|-----------|-------|
+| 200 | Cotação criada | `QuoteResponse` |
+| 400 | Validação falhou | `ErrorResponse` com `details: [...]` |
+| 404 | Produto não encontrado | `ErrorResponse` |
+| 500 | Erro interno inesperado | `ErrorResponse` |
 
-#### Responses
-
-##### 200 OK — Cotação calculada com sucesso
-
+**Response 200**:
 ```json
 {
-  "productId": "6715a1b2c3d4e5f6a7b8c9d0",
+  "productId": "abc123",
   "productName": "RESIDENCIAL",
   "productType": "COBERTURA",
   "price": 300.00,
@@ -50,82 +59,87 @@ Calcula o preço de uma cotação de seguro com base no produto selecionado.
 }
 ```
 
-| Campo | Tipo | Descrição |
-|-------|------|-----------|
-| `productId` | `string` | ID do produto utilizado |
-| `productName` | `string` | Nome do produto |
-| `productType` | `string` | Tipo do produto (`COBERTURA` ou `ASSISTENCIA`) |
-| `price` | `number` | Preço calculado do seguro (em reais, duas casas decimais) |
-| `customerName` | `string` | Nome do cliente (eco para confirmação) |
+---
 
-##### 400 Bad Request — Payload inválido
+## Comportamentos alterados por esta tarefa
 
-Retornado quando campos obrigatórios estão ausentes ou em formato incorreto.
+### Rota inexistente → 404 Not Found
 
-```json
-{
-  "status": 400,
-  "error": "Bad Request",
-  "message": "Erro de validação",
-  "details": [
-    "customer.name: must not be blank",
-    "productId: must not be blank"
-  ]
-}
+Qualquer requisição a um caminho não mapeado retorna:
+
 ```
-
-| Campo | Tipo | Descrição |
-|-------|------|-----------|
-| `status` | `integer` | Código HTTP |
-| `error` | `string` | Nome do erro HTTP |
-| `message` | `string` | Mensagem geral |
-| `details` | `string[]` | Lista de erros de validação por campo |
-
-##### 404 Not Found — Produto não encontrado
-
-Retornado quando o `productId` informado não corresponde a nenhum produto na collection.
+GET / HTTP/1.1
+→ 404 Not Found
+```
 
 ```json
 {
   "status": 404,
   "error": "Not Found",
-  "message": "Produto não encontrado com o ID: 6715a1b2c3d4e5f6a7b8c9d0"
+  "message": "Nenhum endpoint encontrado para GET /"
 }
 ```
 
-| Campo | Tipo | Descrição |
-|-------|------|-----------|
-| `status` | `integer` | Código HTTP |
-| `error` | `string` | Nome do erro HTTP |
-| `message` | `string` | Mensagem descritiva do erro |
+**Exemplos de rotas que retornam 404**:
+- `GET /`
+- `GET /foo`
+- `GET /caminho/qualquer/inexistente`
+- `POST /api/nonexistent`
 
-##### 500 Internal Server Error — Erro inesperado
+### Método não permitido → 405 Method Not Allowed
+
+Requisição com método HTTP não suportado em rota existente:
+
+```
+GET /api/quotes HTTP/1.1
+→ 405 Method Not Allowed
+```
 
 ```json
 {
-  "status": 500,
-  "error": "Internal Server Error",
-  "message": "Erro interno do servidor"
+  "status": 405,
+  "error": "Method Not Allowed",
+  "message": "Método GET não é permitido para este endpoint. Métodos suportados: [POST]"
 }
 ```
 
-## Formato de erro padrão
-
-Todas as respostas de erro seguem o mesmo formato:
+```
+DELETE /api/quotes HTTP/1.1
+→ 405 Method Not Allowed
+```
 
 ```json
 {
-  "status": <int>,
-  "error": "<string>",
-  "message": "<string>",
-  "details": ["<string>"]  // opcional, presente apenas em erros de validação
+  "status": 405,
+  "error": "Method Not Allowed",
+  "message": "Método DELETE não é permitido para este endpoint. Métodos suportados: [POST]"
 }
 ```
 
-## Notas
+---
 
-- Não há paginação, filtro ou ordenação — há apenas um endpoint de cotação.
-- Não há autenticação — fora de escopo.
-- O `productId` é o `_id` do MongoDB representado como string hexadecimal de 24 caracteres.
-- O preço é retornado como `number` (ponto flutuante com até duas casas decimais).
-- O `Content-Type` de todas as respostas é `application/json`.
+## Novos endpoints (Swagger/OpenAPI)
+
+### GET /swagger-ui.html — Swagger UI (redirecionamento)
+
+Redireciona para `/swagger-ui/index.html`. Abre a interface interativa da documentação.
+
+| Status | Descrição |
+|--------|-----------|
+| 302 | Redirecionamento para `/swagger-ui/index.html` |
+
+### GET /swagger-ui/index.html — Swagger UI
+
+Página HTML interativa de documentação da API.
+
+| Status | Descrição |
+|--------|-----------|
+| 200 | Página HTML do Swagger UI |
+
+### GET /v3/api-docs — Especificação OpenAPI (JSON)
+
+Retorna a especificação OpenAPI 3.0 da API em formato JSON.
+
+| Status | Descrição |
+|--------|-----------|
+| 200 | Especificação OpenAPI em JSON |
